@@ -240,6 +240,43 @@ function assignSlots(playerList) {
 }
 
 const STORAGE_KEY = "nfl-draft-assistant-state";
+const INJURY_STATUS_ORDER = ["Out", "Doubtful", "Questionable", "Limited", "Probable", "Active", "Healthy"];
+
+function normalizePlayerName(raw) {
+  return [raw.first_name, raw.last_name].filter(Boolean).join(" ").trim();
+}
+
+function normalisePos(pos) {
+  if (pos === "DEF") return "DST";
+  if (pos === "PK") return "K";
+  return pos || "RB";
+}
+
+function getPlayerInjuryState(player) {
+  const injuryStatus = (player?.injuryStatus || player?.status || "").trim();
+  const injuryBodyPart = (player?.injuryBodyPart || "").trim();
+  const safetyStatus = (player?.status || "").trim();
+
+  if (injuryStatus && !["Active", "Healthy", "None"].includes(injuryStatus)) {
+    return {
+      flagged: true,
+      label: injuryStatus,
+      bodyPart: injuryBodyPart || "Update pending",
+      priority: INJURY_STATUS_ORDER.indexOf(injuryStatus) >= 0 ? INJURY_STATUS_ORDER.indexOf(injuryStatus) : 99,
+    };
+  }
+
+  if (safetyStatus && ["Out", "Doubtful", "Questionable", "Limited", "Inactive", "IR", "Injured Reserve"].includes(safetyStatus)) {
+    return {
+      flagged: true,
+      label: safetyStatus,
+      bodyPart: injuryBodyPart || "Monitor",
+      priority: INJURY_STATUS_ORDER.indexOf(safetyStatus) >= 0 ? INJURY_STATUS_ORDER.indexOf(safetyStatus) : 99,
+    };
+  }
+
+  return { flagged: false, label: "Healthy", bodyPart: "", priority: 999 };
+}
 
 if (!window.storage) {
   window.storage = {
@@ -260,27 +297,28 @@ async function loadPlayersFromSleeper() {
     if (!response.ok) throw new Error("Sleeper API failed");
     const playerMap = await response.json();
 
-    // Transform Sleeper data to app format
     const sleeperPlayers = Object.values(playerMap)
-      .filter((p) => p.position && ["QB", "RB", "WR", "TE", "K"].includes(p.position))
+      .filter((p) => p && p.position && ["QB", "RB", "WR", "TE", "K", "DEF"].includes(p.position))
       .map((p, i) => ({
-        id: p.player_id,
-        name: `${p.first_name} ${p.last_name}`,
-        pos: p.position,
+        id: String(p.player_id ?? `s-${i}`),
+        name: normalizePlayerName(p),
+        pos: normalisePos(p.position),
         nfl: p.team || "FA",
         rank: i + 1,
+        status: p.status || "Active",
+        injuryStatus: p.injury_status || null,
+        injuryBodyPart: p.injury_body_part || null,
+        injuryNotes: p.injury_notes || null,
+        active: p.active ?? true,
       }));
 
-    // Add DST from seed (Sleeper doesn't include defense/ST)
     const dstFromSeed = SEED_PLAYERS.filter((p) => p.pos === "DST");
-    const allPlayers = [...sleeperPlayers, ...dstFromSeed].sort(
-      (a, b) => a.rank - b.rank
-    );
+    const allPlayers = [...sleeperPlayers, ...dstFromSeed].sort((a, b) => a.rank - b.rank);
 
-    return allPlayers;
+    return { players: allPlayers, updatedAt: new Date().toISOString() };
   } catch (e) {
     console.warn("Failed to load from Sleeper API, using seed data:", e.message);
-    return SEED_PLAYERS;
+    return { players: SEED_PLAYERS, updatedAt: new Date().toISOString() };
   }
 }
 
@@ -301,16 +339,18 @@ export default function App() {
   const [customPos, setCustomPos] = useState("RB");
   const [customTeam, setCustomTeam] = useState("");
   const [showBoard, setShowBoard] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        // First load players from Sleeper API
-        const apiPlayers = await loadPlayersFromSleeper();
-        if (!cancelled) setPlayers(apiPlayers);
+        const { players: apiPlayers, updatedAt } = await loadPlayersFromSleeper();
+        if (!cancelled) {
+          setPlayers(apiPlayers);
+          setLastUpdated(updatedAt);
+        }
 
-        // Then load saved state
         const res = await window.storage.get(STORAGE_KEY);
         if (res && res.value && !cancelled) {
           const data = JSON.parse(res.value);
@@ -321,6 +361,7 @@ export default function App() {
           if (data.keepers) setKeepers(data.keepers);
           if (data.players) setPlayers(data.players);
           if (data.pickResults) setPickResults(data.pickResults);
+          if (data.lastUpdated) setLastUpdated(data.lastUpdated);
         }
       } catch (e) {
         // nothing saved yet
@@ -331,9 +372,9 @@ export default function App() {
   }, []);
 
   const saveState = useCallback((patch) => {
-    const data = { phase, teams, myTeamIndex, benchCount, keepers, players, pickResults, ...patch };
+    const data = { phase, teams, myTeamIndex, benchCount, keepers, players, pickResults, lastUpdated, ...patch };
     try { window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch (e) { /* ignore */ }
-  }, [phase, teams, myTeamIndex, benchCount, keepers, players, pickResults]);
+  }, [phase, teams, myTeamIndex, benchCount, keepers, players, pickResults, lastUpdated]);
 
   const totalRounds = STARTER_SLOTS.length + Number(benchCount || 0);
   const numTeams = teams.length;
@@ -432,6 +473,7 @@ export default function App() {
   }
 
   const playerById = useMemo(() => { const m = {}; players.forEach((p) => (m[p.id] = p)); return m; }, [players]);
+  const injuredPlayers = useMemo(() => players.filter((p) => getPlayerInjuryState(p).flagged), [players]);
   const projPtsMap = useMemo(() => { const m = {}; players.forEach((p) => (m[p.id] = getProjPoints(p))); return m; }, [players]);
   const replacementLevel = useMemo(() => {
     const byPos = {};
@@ -599,14 +641,34 @@ export default function App() {
               <label>Bench spots (starters are fixed: QB/RB/RB/WR/WR/TE/FLEX/DST/K)</label>
               <input type="number" min="0" max="10" value={benchCount} onChange={(e) => setBenchCount(Number(e.target.value))} style={{ maxWidth: 120 }} />
             </div>
-            <div className="sub">Total rounds: {totalRounds} · ESPN standard scoring/roster assumed — adjust bench count if your league differs.</div>
+            <div className="sub" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <span>Total rounds: {totalRounds} · ESPN standard scoring/roster assumed — adjust bench count if your league differs.</span>
+              <span className="mono" style={{ color: "#3DDC84" }}>Live player feed: {lastUpdated ? new Date(lastUpdated).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "just now"}</span>
+            </div>
           </div>
 
           <div className="card">
             <div className="section-title">Teams, Draft Order &amp; Keepers</div>
             <div className="note" style={{ marginTop: -4, marginBottom: 8 }}>
-              Set a keeper for any team that has one. Each keeper locks into that team's pick for the round you choose — every other pick that round happens normally.
+              Set a keeper for any team that has one. Each keeper locks into that team's pick for the round you choose — every other pick that round happens normally. Injury statuses refresh from the live Sleeper player feed, so questionable or out tags show up before the draft starts.
             </div>
+            {injuredPlayers.length > 0 && (
+              <div className="bpa-strip" style={{ margin: "0 0 14px" }}>
+                <div className="section-title" style={{ marginBottom: 6 }}>Injury Watch</div>
+                <div className="bpa-list">
+                  {injuredPlayers.slice(0, 6).map((p) => {
+                    const injury = getPlayerInjuryState(p);
+                    return (
+                      <div className="bpa-chip" key={`injury-${p.id}`}>
+                        <span className="pos-badge" style={{ background: POS_COLORS[p.pos] }}>{p.pos}</span>
+                        <span>{p.name}</span>
+                        <span className="mono" style={{ color: injury.flagged ? "#FFB25B" : "#3DDC84", fontSize: 11 }}>{injury.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {teams.map((t, i) => {
               const k = keepers[i];
               const kp = k.playerId ? playerById[k.playerId] : null;
@@ -721,17 +783,25 @@ export default function App() {
                 <button className={`filter-btn ${sortMode === "rank" ? "active" : ""}`} onClick={() => setSortMode("rank")}>Sort: Consensus Rank</button>
               </div>
               <div className="player-list">
-                {filteredAvailable.map((p) => (
-                  <div className="player-row" key={p.id}>
-                    <span className="p-rank mono">{p.rank}</span>
-                    <span className="pos-badge" style={{ background: POS_COLORS[p.pos] }}>{p.pos}</span>
-                    <span className="p-name">{p.name}</span>
-                    <span className="p-nfl mono">{p.nfl}</span>
-                    <span className="mono" style={{ color: "#7A8699", fontSize: 11, width: 50, textAlign: "right" }}>{projPtsMap[p.id].toFixed(0)}pt</span>
-                    <span className="mono" style={{ color: valueMap[p.id] >= 0 ? "#3DDC84" : "#FF6B6B", fontSize: 12, width: 55, textAlign: "right" }}>{valueMap[p.id] >= 0 ? "+" : ""}{valueMap[p.id].toFixed(0)} VOR</span>
-                    <button className="btn-small" disabled={draftComplete} onClick={() => assignPlayer(p.id)}>Draft</button>
-                  </div>
-                ))}
+                {filteredAvailable.map((p) => {
+                  const injury = getPlayerInjuryState(p);
+                  return (
+                    <div className="player-row" key={p.id}>
+                      <span className="p-rank mono">{p.rank}</span>
+                      <span className="pos-badge" style={{ background: POS_COLORS[p.pos] }}>{p.pos}</span>
+                      <span className="p-name">{p.name}</span>
+                      <span className="p-nfl mono">{p.nfl}</span>
+                      {injury.flagged ? (
+                        <span className="mono" style={{ color: "#FFB25B", fontSize: 10, minWidth: 62, textAlign: "center", border: "1px solid rgba(255,178,91,0.4)", borderRadius: 999, padding: "2px 6px" }}>{injury.label}</span>
+                      ) : (
+                        <span className="mono" style={{ color: "#3DDC84", fontSize: 10, minWidth: 62, textAlign: "center", border: "1px solid rgba(61,220,132,0.3)", borderRadius: 999, padding: "2px 6px" }}>Healthy</span>
+                      )}
+                      <span className="mono" style={{ color: "#7A8699", fontSize: 11, width: 50, textAlign: "right" }}>{projPtsMap[p.id].toFixed(0)}pt</span>
+                      <span className="mono" style={{ color: valueMap[p.id] >= 0 ? "#3DDC84" : "#FF6B6B", fontSize: 12, width: 55, textAlign: "right" }}>{valueMap[p.id] >= 0 ? "+" : ""}{valueMap[p.id].toFixed(0)} VOR</span>
+                      <button className="btn-small" disabled={draftComplete} onClick={() => assignPlayer(p.id)}>Draft</button>
+                    </div>
+                  );
+                })}
                 {filteredAvailable.length === 0 && <div className="sub" style={{ padding: 10 }}>No players match.</div>}
               </div>
 
@@ -749,15 +819,18 @@ export default function App() {
             <div>
               <div className="card" style={{ marginBottom: 16 }}>
                 <div className="section-title">Best For Your Team (weighted by need)</div>
-                {recommendations.map((p) => (
-                  <div className={`rec-row ${p.isNeed ? "need" : ""}`} key={p.id}>
-                    <span className="mono" style={{ color: valueMap[p.id] >= 0 ? "#3DDC84" : "#FF6B6B", fontSize: 12 }}>{valueMap[p.id] >= 0 ? "+" : ""}{valueMap[p.id].toFixed(0)}</span>
-                    <span className="pos-badge" style={{ background: POS_COLORS[p.pos] }}>{p.pos}</span>
-                    <span style={{ flex: 1 }}>{p.name}</span>
-                    <span className="mono" style={{ color: "#7A8699", fontSize: 11 }}>{p.nfl}</span>
-                    {p.isNeed && <span className="need-tag">NEED</span>}
-                  </div>
-                ))}
+                {recommendations.map((p) => {
+                  const injury = getPlayerInjuryState(p);
+                  return (
+                    <div className={`rec-row ${p.isNeed ? "need" : ""}`} key={p.id}>
+                      <span className="mono" style={{ color: valueMap[p.id] >= 0 ? "#3DDC84" : "#FF6B6B", fontSize: 12 }}>{valueMap[p.id] >= 0 ? "+" : ""}{valueMap[p.id].toFixed(0)}</span>
+                      <span className="pos-badge" style={{ background: POS_COLORS[p.pos] }}>{p.pos}</span>
+                      <span style={{ flex: 1 }}>{p.name}</span>
+                      <span className="mono" style={{ color: injury.flagged ? "#FFB25B" : "#7A8699", fontSize: 11 }}>{injury.flagged ? injury.label : "Healthy"}</span>
+                      {p.isNeed && <span className="need-tag">NEED</span>}
+                    </div>
+                  );
+                })}
                 {recommendations.length === 0 && <div className="sub">No players left.</div>}
               </div>
 
