@@ -546,6 +546,9 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap');
         * { box-sizing: border-box; }
+        html, body { margin: 0; background: #0B0E14; }
+        body { -webkit-text-size-adjust: 100%; }
+        input, select, button { font: inherit; }
         .app { min-height: 100vh; background: #0B0E14; color: #E8ECF1; font-family: 'Inter', sans-serif; padding: 20px; }
         h1,h2,h3 { font-family: 'Space Grotesk', sans-serif; margin: 0; }
         .mono { font-family: 'IBM Plex Mono', monospace; }
@@ -558,11 +561,11 @@ export default function App() {
         .setup-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; align-items: start; }
         @media (max-width: 900px) { .setup-grid { grid-template-columns: 1fr; } }
         .team-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #1B2130; }
-        .team-row input[type=text] { flex: 1; background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 7px 9px; border-radius: 6px; font-size: 13px; }
+        .team-row input[type=text] { flex: 1; background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 7px 9px; border-radius: 6px; font-size: 16px; }
         .team-row label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9BA6B7; white-space: nowrap; }
         .field { margin-bottom: 14px; }
         .field label { display: block; font-size: 12px; color: #9BA6B7; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .field input[type=text], .field input[type=number] { width: 100%; background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 9px 10px; border-radius: 6px; font-size: 14px; }
+        .field input[type=text], .field input[type=number] { width: 100%; background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 9px 10px; border-radius: 6px; font-size: 16px; }
         .row-inline { display: flex; gap: 10px; align-items: center; }
         button { cursor: pointer; font-family: 'Inter', sans-serif; }
         .btn-primary { background: #3DDC84; color: #0B0E14; border: none; padding: 11px 18px; border-radius: 7px; font-weight: 600; font-size: 14px; }
@@ -577,10 +580,12 @@ export default function App() {
         .team-block { padding: 8px 0; border-bottom: 1px solid #1B2130; }
         .keeper-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9BA6B7; margin: 6px 0 0 30px; }
         .keeper-inline { margin: 8px 0 4px 30px; background: #0F131C; border: 1px solid #1B2130; border-radius: 7px; padding: 10px; }
-        .keeper-inline input[type=text] { width: 100%; background: #131822; border: 1px solid #2A3346; color: #E8ECF1; padding: 7px 9px; border-radius: 6px; font-size: 12px; margin-bottom: 4px; }
-        .keeper-selected-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+        .keeper-inline input[type=text] { width: 100%; background: #131822; border: 1px solid #2A3346; color: #E8ECF1; padding: 7px 9px; border-radius: 6px; font-size: 16px; margin-bottom: 4px; }
+        .keeper-selected-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; gap: 10px; }
+        .keeper-selected-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .keeper-placed-note { margin-top: 8px; font-size: 11px; color: #9BA6B7; }
         .keeper-round-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: #9BA6B7; }
-        .keeper-round-row input { width: 60px; background: #131822; border: 1px solid #2A3346; color: #E8ECF1; padding: 5px 7px; border-radius: 5px; font-size: 12px; }
+        .keeper-round-row input { width: 60px; background: #131822; border: 1px solid #2A3346; color: #E8ECF1; padding: 5px 7px; border-radius: 5px; font-size: 16px; }
         .bpa-strip { background: #131822; border: 1px solid #2A3346; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; }
         .bpa-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
         .bpa-chip { display: flex; align-items: center; gap: 6px; background: #0F131C; border: 1px solid #1B2130; border-radius: 20px; padding: 5px 6px 5px 10px; font-size: 12px; }
@@ -595,7 +600,7 @@ export default function App() {
         .filters { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
         .filter-btn { background: #0F131C; border: 1px solid #2A3346; color: #9BA6B7; padding: 6px 11px; border-radius: 6px; font-size: 12px; }
         .filter-btn.active { background: #232B3A; color: #E8ECF1; border-color: #3DDC84; }
-        .search-input { width: 100%; background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 9px 10px; border-radius: 7px; font-size: 13px; margin-bottom: 10px; }
+        .search-input { width: 100%; background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 9px 10px; border-radius: 7px; font-size: 16px; margin-bottom: 10px; }
         .player-list { max-height: 480px; overflow-y: auto; }
         .player-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-bottom: 1px solid #1B2130; font-size: 13px; }
         .player-row:hover { background: #161C28; }
@@ -618,9 +623,9 @@ export default function App() {
         .section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: #9BA6B7; margin-bottom: 10px; font-weight: 600; }
         .top-actions { display: flex; gap: 8px; flex-wrap: wrap; }
         .add-custom { display: flex; gap: 6px; margin-top: 10px; }
-        .add-custom input { background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+        .add-custom input { background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 6px 8px; border-radius: 6px; font-size: 16px; }
         .add-custom input.name { flex: 1; }
-        .add-custom select { background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+        .add-custom select { background: #0F131C; border: 1px solid #2A3346; color: #E8ECF1; padding: 6px 8px; border-radius: 6px; font-size: 16px; }
         .complete-banner { background: #14231A; border: 1px solid #24422F; padding: 14px 18px; border-radius: 10px; margin-bottom: 14px; text-align: center; font-weight: 600; }
         .note { font-size: 12px; color: #6E7889; line-height: 1.5; margin-top: 10px; }
       `}</style>
@@ -690,10 +695,15 @@ export default function App() {
                     <div className="keeper-inline">
                       {kp ? (
                         <div className="keeper-selected-row">
-                          <span>
-                            <strong>{kp.name}</strong> <span className="pos-badge" style={{ background: POS_COLORS[kp.pos] }}>{kp.pos}</span> <span className="mono" style={{ color: "#7A8699" }}>{kp.nfl}</span>
-                          </span>
-                          <button className="btn-small" onClick={() => updateKeeper(i, { playerId: null })}>Change</button>
+                          <div className="keeper-selected-meta">
+                            <span>
+                              <strong>{kp.name}</strong> <span className="pos-badge" style={{ background: POS_COLORS[kp.pos] }}>{kp.pos}</span> <span className="mono" style={{ color: "#7A8699" }}>{kp.nfl}</span>
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <button className="btn-small" onClick={() => updateKeeper(i, { playerId: null })}>Change</button>
+                            <button className="btn-small" onClick={() => updateKeeper(i, { enabled: false, playerId: null })}>Remove</button>
+                          </div>
                         </div>
                       ) : (
                         <div>
@@ -706,6 +716,7 @@ export default function App() {
                           ))}
                         </div>
                       )}
+                      <div className="keeper-placed-note">Placed on the draft board for Round {k.round} automatically.</div>
                       <div className="keeper-round-row">
                         Round
                         <input type="number" min="1" max={totalRounds} value={k.round} onChange={(e) => updateKeeper(i, { round: Number(e.target.value) })} />
