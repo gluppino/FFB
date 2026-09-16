@@ -66,6 +66,14 @@ const RAW = [
 const SEED_PLAYERS = RAW.map((r, i) => ({ id: `p${i + 1}`, name: r[0], pos: r[1], nfl: r[2], rank: i + 1 }));
 
 const GAMES = 17;
+const DEFAULT_ROSTER = { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, DST: 1, K: 1, BENCH: 6 };
+const DEFAULT_SCORING = { reception: 1, passYard: 0.05, passTD: 6, interception: -2, rushYard: 0.1, rushTD: 6, recYard: 0.1, recTD: 6, fumble: -2, bonuses: true };
+const ROSTER_FIELDS = ["QB", "RB", "WR", "TE", "FLEX", "DST", "K", "BENCH"];
+const SCORING_FIELDS = [
+  ["reception", "Point per reception"], ["passYard", "Point per passing yard"], ["passTD", "Passing TD"],
+  ["interception", "Interception"], ["rushYard", "Point per rushing yard"], ["rushTD", "Rushing TD"],
+  ["recYard", "Point per receiving yard"], ["recTD", "Receiving TD"], ["fumble", "Fumble lost"],
+];
 
 function bigPlayBonus(tds) {
   return tds * 0.16 * 1 + tds * 0.07 * 2;
@@ -87,20 +95,23 @@ function yardageGameBonus(totalYards, tiers) {
   return bonus;
 }
 
-function calcOffensePoints(s) {
+function calcOffensePoints(s, scoring) {
   let pts = 0;
-  pts += (s.passYd || 0) * 0.05;
-  pts += (s.passTD || 0) * 6 + bigPlayBonus(s.passTD || 0);
-  pts += (s.int || 0) * -2;
-  pts += yardageGameBonus(s.passYd || 0, [{ min: 300, max: 399, val: 5 }, { min: 400, max: null, val: 6 }]);
-  pts += (s.rushYd || 0) * 0.1;
-  pts += (s.rushTD || 0) * 6 + bigPlayBonus(s.rushTD || 0);
-  pts += yardageGameBonus(s.rushYd || 0, [{ min: 100, max: 199, val: 5 }, { min: 200, max: null, val: 6 }]);
-  pts += (s.recYd || 0) * 0.1;
-  pts += (s.rec || 0) * 1;
-  pts += (s.recTD || 0) * 6 + bigPlayBonus(s.recTD || 0);
-  pts += yardageGameBonus(s.recYd || 0, [{ min: 100, max: 199, val: 5 }, { min: 200, max: null, val: 6 }]);
-  pts += (s.fuml || 0) * -2;
+  pts += (s.passYd || 0) * scoring.passYard;
+  pts += (s.passTD || 0) * scoring.passTD;
+  pts += (s.int || 0) * scoring.interception;
+  pts += (s.rushYd || 0) * scoring.rushYard;
+  pts += (s.rushTD || 0) * scoring.rushTD;
+  pts += (s.recYd || 0) * scoring.recYard;
+  pts += (s.rec || 0) * scoring.reception;
+  pts += (s.recTD || 0) * scoring.recTD;
+  pts += (s.fuml || 0) * scoring.fumble;
+  if (scoring.bonuses) {
+    pts += bigPlayBonus((s.passTD || 0) + (s.rushTD || 0) + (s.recTD || 0));
+    pts += yardageGameBonus(s.passYd || 0, [{ min: 300, max: 399, val: 5 }, { min: 400, max: null, val: 6 }]);
+    pts += yardageGameBonus(s.rushYd || 0, [{ min: 100, max: 199, val: 5 }, { min: 200, max: null, val: 6 }]);
+    pts += yardageGameBonus(s.recYd || 0, [{ min: 100, max: 199, val: 5 }, { min: 200, max: null, val: 6 }]);
+  }
   return pts;
 }
 
@@ -202,9 +213,9 @@ function getOffenseStats(p) {
   return null;
 }
 
-function getProjPoints(p) {
+function getProjPoints(p, scoring) {
   if (p.pos === "QB" || p.pos === "RB" || p.pos === "WR" || p.pos === "TE") {
-    return calcOffensePoints(getOffenseStats(p));
+    return calcOffensePoints(getOffenseStats(p), scoring);
   }
   if (p.pos === "K") {
     const idxAdj = Math.max(0, (p.rank || 0) - 142) * 0.3;
@@ -217,24 +228,20 @@ function getProjPoints(p) {
   return 0;
 }
 
-const STARTER_SLOTS = ["QB", "RB1", "RB2", "WR1", "WR2", "TE", "FLEX", "DST", "K"];
-const SLOT_ACCEPT = {
-  QB: ["QB"], RB1: ["RB"], RB2: ["RB"], WR1: ["WR"], WR2: ["WR"],
-  TE: ["TE"], FLEX: ["RB", "WR", "TE"], DST: ["DST"], K: ["K"],
-};
-const SLOT_LABEL = { RB1: "RB", RB2: "RB", WR1: "WR", WR2: "WR" };
-
-function assignSlots(playerList) {
-  const slots = { QB: null, RB1: null, RB2: null, WR1: null, WR2: null, TE: null, FLEX: null, DST: null, K: null };
+function makeSlots(roster) {
+  return ["QB", "RB", "WR", "TE", "FLEX", "DST", "K"].flatMap((pos) =>
+    Array.from({ length: roster[pos] }, (_, i) => `${pos}${i + 1}`));
+}
+function acceptedPositions(slot) {
+  return slot.startsWith("FLEX") ? ["RB", "WR", "TE"] : [slot.replace(/\d+$/, "")];
+}
+function assignSlots(playerList, starterSlots) {
+  const slots = Object.fromEntries(starterSlots.map((slot) => [slot, null]));
   const bench = [];
   for (const p of playerList) {
-    if (p.pos === "QB") { if (!slots.QB) slots.QB = p; else bench.push(p); }
-    else if (p.pos === "RB") { if (!slots.RB1) slots.RB1 = p; else if (!slots.RB2) slots.RB2 = p; else if (!slots.FLEX) slots.FLEX = p; else bench.push(p); }
-    else if (p.pos === "WR") { if (!slots.WR1) slots.WR1 = p; else if (!slots.WR2) slots.WR2 = p; else if (!slots.FLEX) slots.FLEX = p; else bench.push(p); }
-    else if (p.pos === "TE") { if (!slots.TE) slots.TE = p; else if (!slots.FLEX) slots.FLEX = p; else bench.push(p); }
-    else if (p.pos === "DST") { if (!slots.DST) slots.DST = p; else bench.push(p); }
-    else if (p.pos === "K") { if (!slots.K) slots.K = p; else bench.push(p); }
-    else bench.push(p);
+    const slot = starterSlots.find((s) => !s.startsWith("FLEX") && !slots[s] && acceptedPositions(s).includes(p.pos))
+      || starterSlots.find((s) => s.startsWith("FLEX") && !slots[s] && acceptedPositions(s).includes(p.pos));
+    if (slot) slots[slot] = p; else bench.push(p);
   }
   return { slots, bench };
 }
@@ -291,43 +298,16 @@ if (!window.storage) {
   };
 }
 
-async function loadPlayersFromSleeper() {
-  try {
-    const response = await fetch("https://api.sleeper.app/v1/players/nfl");
-    if (!response.ok) throw new Error("Sleeper API failed");
-    const playerMap = await response.json();
-
-    const sleeperPlayers = Object.values(playerMap)
-      .filter((p) => p && p.position && ["QB", "RB", "WR", "TE", "K", "DEF"].includes(p.position))
-      .map((p, i) => ({
-        id: String(p.player_id ?? `s-${i}`),
-        name: normalizePlayerName(p),
-        pos: normalisePos(p.position),
-        nfl: p.team || "FA",
-        rank: i + 1,
-        status: p.status || "Active",
-        injuryStatus: p.injury_status || null,
-        injuryBodyPart: p.injury_body_part || null,
-        injuryNotes: p.injury_notes || null,
-        active: p.active ?? true,
-      }));
-
-    const dstFromSeed = SEED_PLAYERS.filter((p) => p.pos === "DST");
-    const allPlayers = [...sleeperPlayers, ...dstFromSeed].sort((a, b) => a.rank - b.rank);
-
-    return { players: allPlayers, updatedAt: new Date().toISOString() };
-  } catch (e) {
-    console.warn("Failed to load from Sleeper API, using seed data:", e.message);
-    return { players: SEED_PLAYERS, updatedAt: new Date().toISOString() };
-  }
-}
-
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [phase, setPhase] = useState("setup");
   const [teams, setTeams] = useState(Array.from({ length: 12 }, (_, i) => ({ name: `Team ${i + 1}` })));
   const [myTeamIndex, setMyTeamIndex] = useState(0);
   const [benchCount, setBenchCount] = useState(6);
+  const [roster, setRoster] = useState(DEFAULT_ROSTER);
+  const [scoring, setScoring] = useState(DEFAULT_SCORING);
+  const [draftType, setDraftType] = useState("snake");
+  const [draftOrder, setDraftOrder] = useState(Array.from({ length: 12 }, (_, i) => i));
   const [keepers, setKeepers] = useState(Array.from({ length: 12 }, () => ({ enabled: false, playerId: null, round: 3 })));
   const [players, setPlayers] = useState(SEED_PLAYERS);
   const [pickResults, setPickResults] = useState([]);
@@ -345,12 +325,6 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const { players: apiPlayers, updatedAt } = await loadPlayersFromSleeper();
-        if (!cancelled) {
-          setPlayers(apiPlayers);
-          setLastUpdated(updatedAt);
-        }
-
         const res = await window.storage.get(STORAGE_KEY);
         if (res && res.value && !cancelled) {
           const data = JSON.parse(res.value);
@@ -358,6 +332,11 @@ export default function App() {
           if (data.teams) setTeams(data.teams);
           if (typeof data.myTeamIndex === "number") setMyTeamIndex(data.myTeamIndex);
           if (data.benchCount != null) setBenchCount(data.benchCount);
+          if (data.roster) setRoster({ ...DEFAULT_ROSTER, ...data.roster });
+          else if (data.benchCount != null) setRoster({ ...DEFAULT_ROSTER, BENCH: data.benchCount });
+          if (data.scoring) setScoring({ ...DEFAULT_SCORING, ...data.scoring });
+          if (data.draftType === "linear" || data.draftType === "snake") setDraftType(data.draftType);
+          if (Array.isArray(data.draftOrder) && data.draftOrder.length === (data.teams || []).length) setDraftOrder(data.draftOrder);
           if (data.keepers) setKeepers(data.keepers);
           if (data.players) setPlayers(data.players);
           if (data.pickResults) setPickResults(data.pickResults);
@@ -372,23 +351,63 @@ export default function App() {
   }, []);
 
   const saveState = useCallback((patch) => {
-    const data = { phase, teams, myTeamIndex, benchCount, keepers, players, pickResults, lastUpdated, ...patch };
+    const data = { phase, teams, myTeamIndex, benchCount, roster, scoring, draftType, draftOrder, keepers, players, pickResults, lastUpdated, ...patch };
     try { window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch (e) { /* ignore */ }
-  }, [phase, teams, myTeamIndex, benchCount, keepers, players, pickResults, lastUpdated]);
+  }, [phase, teams, myTeamIndex, benchCount, roster, scoring, draftType, draftOrder, keepers, players, pickResults, lastUpdated]);
 
-  const totalRounds = STARTER_SLOTS.length + Number(benchCount || 0);
+  useEffect(() => {
+    if (loaded) saveState({});
+  }, [loaded, saveState]);
+
+  function exportDraft() {
+    const snapshot = { version: 1, phase, teams, myTeamIndex, roster, scoring, draftType, draftOrder, keepers, players, pickResults };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "draft-room-backup.json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function importDraft(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (data.version !== 1 || !Array.isArray(data.teams) || data.teams.length < 2 || data.teams.length > 20
+        || !Array.isArray(data.keepers) || data.keepers.length !== data.teams.length
+        || !Array.isArray(data.draftOrder) || data.draftOrder.length !== data.teams.length
+        || new Set(data.draftOrder).size !== data.teams.length
+        || data.draftOrder.some((i) => !Number.isInteger(i) || i < 0 || i >= data.teams.length)
+        || !Array.isArray(data.players) || !Array.isArray(data.pickResults)) throw new Error("Invalid draft backup");
+      if (!window.confirm("Replace the current draft with this backup? Export it first if you want to keep it.")) return;
+      const nextRoster = { ...DEFAULT_ROSTER, ...data.roster };
+      const rounds = Object.values(nextRoster).reduce((sum, count) => sum + count, 0);
+      if (ROSTER_FIELDS.some((key) => !Number.isInteger(nextRoster[key]) || nextRoster[key] < 0 || nextRoster[key] > 20)
+        || data.pickResults.length > rounds * data.teams.length) throw new Error("Invalid draft settings");
+      setPhase(data.phase === "draft" ? "draft" : "setup");
+      setTeams(data.teams); setMyTeamIndex(Math.max(0, Math.min(data.myTeamIndex || 0, data.teams.length - 1)));
+      setRoster(nextRoster); setScoring({ ...DEFAULT_SCORING, ...data.scoring });
+      setDraftType(data.draftType === "linear" ? "linear" : "snake"); setDraftOrder(data.draftOrder);
+      setKeepers(data.keepers); setPlayers(data.players); setPickResults(data.pickResults);
+    } catch (error) { window.alert("Could not import this draft backup. Check that it is a Draft Room JSON export."); }
+    finally { event.target.value = ""; }
+  }
+
+  const starterSlots = useMemo(() => makeSlots(roster), [roster]);
+  const totalRounds = starterSlots.length + roster.BENCH;
   const numTeams = teams.length;
 
   const pickSequence = useMemo(() => {
     const seq = [];
     let overall = 1;
     for (let r = 1; r <= totalRounds; r++) {
-      const base = [...Array(numTeams).keys()];
-      const order = r % 2 === 1 ? base : [...base].reverse();
+      const base = draftOrder;
+      const order = draftType === "snake" && r % 2 === 0 ? [...base].reverse() : base;
       order.forEach((teamIndex, i) => { seq.push({ overall, round: r, pickInRound: i + 1, teamIndex }); overall++; });
     }
     return seq;
-  }, [totalRounds, numTeams]);
+  }, [totalRounds, numTeams, draftOrder, draftType]);
 
   const resolveAuto = useCallback((arr) => {
     const next = [...arr];
@@ -417,6 +436,7 @@ export default function App() {
   }
 
   function assignPlayer(playerId) {
+    if (pickResults.includes(playerId) || !players.some((p) => p.id === playerId)) return;
     const idx = pickResults.findIndex((x) => x == null);
     if (idx === -1) return;
     let next = [...pickResults];
@@ -437,8 +457,9 @@ export default function App() {
       if (isAutoKeeper) { arr[li] = null; li = lastFilled(arr); } else break;
     }
     if (li !== -1) arr[li] = null;
-    setPickResults(arr);
-    saveState({ pickResults: arr });
+    const resolved = resolveAuto(arr);
+    setPickResults(resolved);
+    saveState({ pickResults: resolved });
   }
 
   function addCustomPlayer() {
@@ -467,6 +488,7 @@ export default function App() {
   const keepersIncomplete = keepers.some((k) => k.enabled && !k.playerId);
 
   function resetDraft() {
+    if (!window.confirm("Start a new draft? Download a backup first if you want to keep these picks.")) return;
     setPhase("setup");
     setPickResults([]);
     saveState({ phase: "setup", pickResults: [] });
@@ -474,17 +496,17 @@ export default function App() {
 
   const playerById = useMemo(() => { const m = {}; players.forEach((p) => (m[p.id] = p)); return m; }, [players]);
   const injuredPlayers = useMemo(() => players.filter((p) => getPlayerInjuryState(p).flagged), [players]);
-  const projPtsMap = useMemo(() => { const m = {}; players.forEach((p) => (m[p.id] = getProjPoints(p))); return m; }, [players]);
+  const projPtsMap = useMemo(() => { const m = {}; players.forEach((p) => (m[p.id] = getProjPoints(p, scoring))); return m; }, [players, scoring]);
   const replacementLevel = useMemo(() => {
     const byPos = {};
     ["QB", "RB", "WR", "TE", "DST", "K"].forEach((pos) => { 
       const arr = players.filter((p) => p.pos === pos).map((p) => projPtsMap[p.id]).sort((a, b) => b - a);
-      const rank = pos === "QB" ? numTeams : pos === "RB" || pos === "WR" ? Math.round(numTeams * 2.4) : pos === "TE" ? Math.round(numTeams * 1.2) : numTeams;
+      const rank = numTeams * (roster[pos] || 0) + (pos === "RB" || pos === "WR" || pos === "TE" ? Math.ceil(numTeams * roster.FLEX / 3) : 0);
       const idx = Math.min(arr.length - 1, Math.max(0, rank - 1));
       byPos[pos] = arr.length ? arr[idx] : 0;
     });
     return byPos;
-  }, [players, projPtsMap, numTeams]);
+  }, [players, projPtsMap, numTeams, roster]);
   const valueMap = useMemo(() => { const m = {}; players.forEach((p) => (m[p.id] = projPtsMap[p.id] - (replacementLevel[p.pos] || 0))); return m; }, [players, projPtsMap, replacementLevel]);
   const draftedIds = useMemo(() => new Set(pickResults.filter(Boolean)), [pickResults]);
   const availablePlayers = useMemo(() => {
@@ -510,13 +532,13 @@ export default function App() {
     return list;
   }
 
-  const myRosterView = useMemo(() => assignSlots(teamPicks(myTeamIndex)), [pickResults, players, myTeamIndex]);
+  const myRosterView = useMemo(() => assignSlots(teamPicks(myTeamIndex), starterSlots), [pickResults, players, myTeamIndex, starterSlots]);
 
   const neededPositions = useMemo(() => {
     const needs = new Set();
-    STARTER_SLOTS.forEach((slot) => { if (!myRosterView.slots[slot]) SLOT_ACCEPT[slot].forEach((pos) => needs.add(pos)); });
+    starterSlots.forEach((slot) => { if (!myRosterView.slots[slot]) acceptedPositions(slot).forEach((pos) => needs.add(pos)); });
     return needs;
-  }, [myRosterView]);
+  }, [myRosterView, starterSlots]);
 
   const recommendations = useMemo(() => availablePlayers.slice(0, 8).map((p) => ({ ...p, isNeed: neededPositions.has(p.pos) })), [availablePlayers, neededPositions]);
 
@@ -541,6 +563,24 @@ export default function App() {
     setTeams(next);
   }
 
+  function updateTeamCount(count) {
+    if (!Number.isInteger(count) || count < 2 || count > 20) return;
+    setTeams((old) => Array.from({ length: count }, (_, i) => old[i] || { name: `Team ${i + 1}` }));
+    setKeepers((old) => Array.from({ length: count }, (_, i) => old[i] || { enabled: false, playerId: null, round: 3 }));
+    setDraftOrder(Array.from({ length: count }, (_, i) => i));
+    setMyTeamIndex((old) => Math.min(old, count - 1));
+  }
+
+  function moveDraftOrder(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= draftOrder.length) return;
+    setDraftOrder((old) => {
+      const next = [...old];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
   return (
     <div className="app">
       <style>{`
@@ -558,6 +598,13 @@ export default function App() {
         .brand span { color: #3DDC84; }
         .sub { color: #7A8699; font-size: 13px; margin-top: 2px; }
         .card { background: #131822; border: 1px solid #232B3A; border-radius: 10px; padding: 18px; }
+        .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+        .settings-grid label { display: flex; flex-direction: column; gap: 5px; color: #B7C0CE; font-size: 12px; }
+        .settings-grid input:not([type=checkbox]), .settings-grid select { width: 100%; background: #0F131C; border: 1px solid #2A3346; border-radius: 6px; color: #E8ECF1; padding: 7px; }
+        .settings-grid label.check-field { flex-direction: row; align-items: center; }
+        .order-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(225px, 1fr)); gap: 6px 14px; }
+        .order-row { display: flex; align-items: center; gap: 5px; font-size: 13px; }
+        .order-row span { flex: 1; }
         .setup-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; align-items: start; }
         @media (max-width: 900px) { .setup-grid { grid-template-columns: 1fr; } }
         .team-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #1B2130; }
@@ -637,25 +684,47 @@ export default function App() {
           <div className="topbar">
             <div>
               <div className="brand">DRAFT<span>ROOM</span></div>
-              <div className="sub">12-team standard keeper draft — set up your league, then run the live draft.</div>
+              <div className="sub">Set your league rules, then track your draft on this device.</div>
             </div>
           </div>
 
           <div className="card" style={{ marginBottom: 16 }}>
-            <div className="field">
-              <label>Bench spots (starters are fixed: QB/RB/RB/WR/WR/TE/FLEX/DST/K)</label>
-              <input type="number" min="0" max="10" value={benchCount} onChange={(e) => setBenchCount(Number(e.target.value))} style={{ maxWidth: 120 }} />
+            <div className="section-title">League settings</div>
+            <div className="settings-grid">
+              <label>Teams <select value={numTeams} onChange={(e) => updateTeamCount(Number(e.target.value))}>
+                {Array.from({ length: 19 }, (_, i) => i + 2).map((n) => <option key={n} value={n}>{n}</option>)}
+              </select></label>
+              <label>Draft type <select value={draftType} onChange={(e) => setDraftType(e.target.value)}>
+                <option value="snake">Snake</option><option value="linear">Linear</option>
+              </select></label>
             </div>
-            <div className="sub" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <span>Total rounds: {totalRounds} · ESPN standard scoring/roster assumed — adjust bench count if your league differs.</span>
-              <span className="mono" style={{ color: "#3DDC84" }}>Live player feed: {lastUpdated ? new Date(lastUpdated).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "just now"}</span>
+            <div className="section-title" style={{ marginTop: 16 }}>Roster spots per team</div>
+            <div className="settings-grid">
+              {ROSTER_FIELDS.map((pos) => <label key={pos}>{pos} <input type="number" min="0" max="20" value={roster[pos]}
+                onChange={(e) => { const value = Number(e.target.value); if (Number.isInteger(value) && value >= 0 && value <= 20) setRoster((old) => ({ ...old, [pos]: value })); }} /></label>)}
             </div>
+            <div className="section-title" style={{ marginTop: 16 }}>Offensive scoring</div>
+            <div className="settings-grid">
+              {SCORING_FIELDS.map(([key, label]) => <label key={key}>{label} <input type="number" step="0.01" value={scoring[key]}
+                onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value) && Math.abs(value) <= 100) setScoring((old) => ({ ...old, [key]: value })); }} /></label>)}
+              <label className="check-field"><input type="checkbox" checked={scoring.bonuses} onChange={(e) => setScoring((old) => ({ ...old, bonuses: e.target.checked }))} /> Yardage and big-play bonuses</label>
+            </div>
+            <div className="note">Kicker and defense scoring still uses the built-in model. Projections are estimates from the included player list; review them before relying on a recommendation.</div>
+            <div className="section-title" style={{ marginTop: 16 }}>First-round draft order</div>
+            <div className="order-grid">{draftOrder.map((teamIndex, i) => <div key={teamIndex} className="order-row">
+              <span>{i + 1}. {teams[teamIndex]?.name}</span>
+              <button type="button" className="btn-small" disabled={i === 0} onClick={() => moveDraftOrder(i, -1)} aria-label={`Move ${teams[teamIndex]?.name} up`}>↑</button>
+              <button type="button" className="btn-small" disabled={i === draftOrder.length - 1} onClick={() => moveDraftOrder(i, 1)} aria-label={`Move ${teams[teamIndex]?.name} down`}>↓</button>
+            </div>)}</div>
+            <div className="note">{totalRounds} rounds · {numTeams * totalRounds} picks. Settings save in this browser.</div>
+            <div className="top-actions" style={{ marginTop: 12 }}><button className="btn-ghost" onClick={exportDraft}>Download backup</button>
+              <label className="btn-ghost" style={{ cursor: "pointer" }}>Import backup <input type="file" accept="application/json,.json" onChange={importDraft} style={{ display: "none" }} /></label></div>
           </div>
 
           <div className="card">
             <div className="section-title">Teams, Draft Order &amp; Keepers</div>
             <div className="note" style={{ marginTop: -4, marginBottom: 8 }}>
-              Set a keeper for any team that has one. Each keeper locks into that team's pick for the round you choose — every other pick that round happens normally. Injury statuses refresh from the live Sleeper player feed, so questionable or out tags show up before the draft starts.
+              Set a keeper for any team that has one. Each keeper locks into that team's pick for the round you choose. Player information is a built-in snapshot and may be out of date.
             </div>
             {injuredPlayers.length > 0 && (
               <div className="bpa-strip" style={{ margin: "0 0 14px" }}>
@@ -732,7 +801,7 @@ export default function App() {
               {keepersIncomplete && <span className="note" style={{ marginLeft: 10 }}>Finish selecting a player for every team marked "has a keeper."</span>}
             </div>
             <div className="note">
-              Default sort is <strong>Value Over Replacement (VOR)</strong> — projected points minus what a freely-available player at that position would score, computed from your league's exact scoring rules (6pt pass/rush/rec TDs, full PPR, yardage &amp; big-play bonuses). Raw points alone would over-rank QBs, since one team only starts one — VOR corrects for that scarcity. Switch to raw points or consensus rank anytime on the draft screen. Stat lines behind the numbers are estimated, not from a live projections feed — good enough to guide value, but sanity-check anyone you're about to reach for.
+              Default sort is <strong>Value Over Replacement (VOR)</strong>, calculated from the included estimates and your offensive scoring settings. Switch to raw points or the built-in player order on the draft screen. These are not live projections or verified consensus rankings.
             </div>
           </div>
         </div>
@@ -744,6 +813,8 @@ export default function App() {
               <div className="sub">{teams[myTeamIndex]?.name} · Pick {currentPick ? currentPick.overall : pickSequence.length} of {pickSequence.length}</div>
             </div>
             <div className="top-actions">
+              <button className="btn-ghost" onClick={exportDraft}>Download backup</button>
+              <label className="btn-ghost" style={{ cursor: "pointer" }}>Import backup <input type="file" accept="application/json,.json" onChange={importDraft} style={{ display: "none" }} /></label>
               <button className="btn-ghost" onClick={() => setShowBoard((s) => !s)}>{showBoard ? "Hide" : "Show"} board</button>
               <button className="btn-ghost" onClick={undoLast}>Undo last pick</button>
               <button className="btn-ghost" onClick={resetDraft}>New draft</button>
@@ -791,7 +862,7 @@ export default function App() {
                 <span style={{ width: 1, background: "#2A3346", margin: "0 4px" }} />
                 <button className={`filter-btn ${sortMode === "value" ? "active" : ""}`} onClick={() => setSortMode("value")}>Sort: Value (VOR)</button>
                 <button className={`filter-btn ${sortMode === "pts" ? "active" : ""}`} onClick={() => setSortMode("pts")}>Sort: Raw Pts</button>
-                <button className={`filter-btn ${sortMode === "rank" ? "active" : ""}`} onClick={() => setSortMode("rank")}>Sort: Consensus Rank</button>
+                <button className={`filter-btn ${sortMode === "rank" ? "active" : ""}`} onClick={() => setSortMode("rank")}>Sort: Built-in Order</button>
               </div>
               <div className="player-list">
                 {filteredAvailable.map((p) => {
@@ -847,11 +918,11 @@ export default function App() {
 
               <div className="card">
                 <div className="section-title">{teams[myTeamIndex]?.name} Roster</div>
-                {STARTER_SLOTS.map((slot) => {
+                {starterSlots.map((slot) => {
                   const p = myRosterView.slots[slot];
                   return (
                     <div className="roster-slot" key={slot}>
-                      <span className="slot-label mono">{SLOT_LABEL[slot] || slot}</span>
+                      <span className="slot-label mono">{slot}</span>
                       {p ? (
                         <span style={{ flex: 1, marginLeft: 10 }}>{p.name} <span className="mono" style={{ color: "#7A8699", fontSize: 11 }}>{p.nfl}</span></span>
                       ) : (
